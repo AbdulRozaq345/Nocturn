@@ -29,7 +29,7 @@ export default function Home() {
   const [volume, setVolume] = useState(0.5);
   const [isMuted, setIsMuted] = useState(false);
   const [playlistInfo, setPlaylistInfo] = useState({
-    name: "Playlist Saya",
+    name: "Upload & Manage lagu untuk Nocturn",
     image: null as string | null,
   });
   // Fitur Tambahan (Search, Download, dll)
@@ -335,7 +335,7 @@ export default function Home() {
           {/* GREETING SECTION */}
           <header className="mb-10">
             <h2 className="text-3xl font-black tracking-tight text-white mb-6">
-              Good Afternoon, Bosquu 🐈‍🤣
+              Hallo, silahkan upload dan edit lagu Bosquu 🐈‍🤣
             </h2>
             <label className="w-48 h-48 bg-[#282828] shadow-2xl flex-shrink-0 flex items-center justify-center cursor-pointer overflow-hidden rounded-md relative group">
               {playlistInfo.image ? (
