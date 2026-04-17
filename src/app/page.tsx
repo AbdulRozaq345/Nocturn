@@ -369,7 +369,7 @@ export default function Home() {
                 onChange={(e) =>
                   setPlaylistInfo({ ...playlistInfo, name: e.target.value })
                 }
-                className="text-7xl font-black bg-transparent border-none outline-none focus:ring-0 p-0 tracking-tighter text-white"
+                className="text-3xl font-black bg-transparent border-none outline-none focus:ring-0 p-0 tracking-tighter text-white"
               />
               <div className="flex items-center gap-2 text-sm font-bold mt-2">
                 <span className="text-[#1DB954] hover:underline cursor-pointer">
