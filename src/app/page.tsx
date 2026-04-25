@@ -37,6 +37,12 @@ type TracksApiResponse = {
   tracks?: unknown;
 };
 
+type StoreTrackResponse = {
+  status?: string;
+  error?: string;
+  data?: Track | null;
+};
+
 export default function Home() {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [currentTrack, setCurrentTrack] = useState<Track | null>(null);
@@ -83,6 +89,12 @@ export default function Home() {
     if (Array.isArray(response.tracks)) return response.tracks as Track[];
 
     return [];
+  };
+
+  const isTrack = (payload: unknown): payload is Track => {
+    if (!payload || typeof payload !== "object") return false;
+    const candidate = payload as Partial<Track>;
+    return typeof candidate.id === "number" || typeof candidate.id === "string";
   };
 
   const getTrackFileName = (track: Track | null) => {
@@ -187,10 +199,10 @@ export default function Home() {
         body: JSON.stringify({ url: youtubeUrl }),
       });
 
-      let json = { status: "", error: "", data: null };
+      let json: StoreTrackResponse = {};
       const text = await res.text();
       try {
-        json = JSON.parse(text.trim());
+        json = JSON.parse(text.trim()) as StoreTrackResponse;
       } catch (e) {
         console.warn("Bukan JSON murni. Raw response:", text);
       }
@@ -200,7 +212,12 @@ export default function Home() {
         json.status === "success" ||
         json.status === "Gaskeun!"
       ) {
-        setTracks((prev) => [json.data as Track, ...prev]);
+        const downloadedTrack = json.data;
+        if (isTrack(downloadedTrack)) {
+          setTracks((prev) => [downloadedTrack, ...prev]);
+        } else {
+          await fetchTracks();
+        }
         setYoutubeUrl("");
         alert("Lagu sukses di-download! Gaskeun 🔥");
       } else {
@@ -236,7 +253,10 @@ export default function Home() {
   };
 
   // Fitur Hapus
-  const handleDeleteTrack = async (e: React.MouseEvent, id: number) => {
+  const handleDeleteTrack = async (
+    e: React.MouseEvent,
+    id: number | string,
+  ) => {
     e.stopPropagation(); // Biar gak auto play lagunya pas klik delete
     const confirmDelete = window.confirm(
       "Yakin mau hapus lagu ini ke tempat sampah, bosquu? 🗿",
