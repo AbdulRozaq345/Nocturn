@@ -49,7 +49,7 @@ export default function Home() {
   const [isFetchingTracks, setIsFetchingTracks] = useState(false);
   const [fetchError, setFetchError] = useState("");
   const [playlistInfo, setPlaylistInfo] = useState({
-    name: "Playlist Saya",
+    name: "Upload & Manage lagu untuk Nocturn",
     image: null as string | null,
   });
   // Fitur Tambahan (Search, Download, dll)
@@ -378,7 +378,7 @@ export default function Home() {
           {/* GREETING SECTION */}
           <header className="mb-10">
             <h2 className="text-3xl font-black tracking-tight text-white mb-6">
-              Good Afternoon, Bosquu 🐈‍🤣
+              Hallo, silahkan upload dan edit lagu Bosquu 🐈‍🤣
             </h2>
             <label className="w-48 h-48 bg-[#282828] shadow-2xl flex-shrink-0 flex items-center justify-center cursor-pointer overflow-hidden rounded-md relative group">
               {playlistInfo.image ? (
@@ -412,7 +412,7 @@ export default function Home() {
                 onChange={(e) =>
                   setPlaylistInfo({ ...playlistInfo, name: e.target.value })
                 }
-                className="text-7xl font-black bg-transparent border-none outline-none focus:ring-0 p-0 tracking-tighter text-white"
+                className="text-3xl font-black bg-transparent border-none outline-none focus:ring-0 p-0 tracking-tighter text-white"
               />
               <div className="flex items-center gap-2 text-sm font-bold mt-2">
                 <span className="text-[#1DB954] hover:underline cursor-pointer">
