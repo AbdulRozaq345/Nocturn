@@ -328,6 +328,7 @@ export default function Home() {
         togglePlay();
       }
     };
+    
 
     window.addEventListener("keydown", handleKeyPress);
     return () => window.removeEventListener("keydown", handleKeyPress);
