@@ -78,7 +78,7 @@ export default function Home() {
   };
 
   const API_BASE =
-    process.env.NEXT_PUBLIC_API_BASE_URL || "https://panel.nexxacodeid.site";
+    process.env.NEXT_PUBLIC_API_BASE_URL || "/backend";
 
   const normalizeTracks = (payload: unknown): Track[] => {
     if (Array.isArray(payload)) return payload as Track[];
