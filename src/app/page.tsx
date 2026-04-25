@@ -19,17 +19,37 @@ import {
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faCircleRight, faCircleLeft } from "@fortawesome/free-solid-svg-icons";
 
+type Track = {
+  id: number | string;
+  trackTitle?: string;
+  title?: string;
+  artistName?: string;
+  artist?: string;
+  fileName?: string;
+  file_name?: string;
+  durationSeconds?: number;
+  duration?: number;
+};
+
+type TracksApiResponse = {
+  status?: string;
+  data?: unknown;
+  tracks?: unknown;
+};
+
 export default function Home() {
-  const [tracks, setTracks] = useState<any[]>([]);
-  const [currentTrack, setCurrentTrack] = useState<any>(null);
+  const [tracks, setTracks] = useState<Track[]>([]);
+  const [currentTrack, setCurrentTrack] = useState<Track | null>(null);
   const [isPlaying, setIsPlaying] = useState(false); // <-- Tambahin state ini
   const [progress, setProgress] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(0.5);
   const [isMuted, setIsMuted] = useState(false);
+  const [isFetchingTracks, setIsFetchingTracks] = useState(false);
+  const [fetchError, setFetchError] = useState("");
   const [playlistInfo, setPlaylistInfo] = useState({
-    name: "Playlist Saya",
+    name: "Upload & Manage lagu untuk Nocturn",
     image: null as string | null,
   });
   // Fitur Tambahan (Search, Download, dll)
@@ -53,6 +73,22 @@ export default function Home() {
 
   const API_BASE =
     process.env.NEXT_PUBLIC_API_BASE_URL || "https://panel.nexxacodeid.site";
+
+  const normalizeTracks = (payload: unknown): Track[] => {
+    if (Array.isArray(payload)) return payload as Track[];
+    if (!payload || typeof payload !== "object") return [];
+
+    const response = payload as TracksApiResponse;
+    if (Array.isArray(response.data)) return response.data as Track[];
+    if (Array.isArray(response.tracks)) return response.tracks as Track[];
+
+    return [];
+  };
+
+  const getTrackFileName = (track: Track | null) => {
+    const rawName = track?.fileName || track?.file_name || "";
+    return rawName ? encodeURIComponent(rawName) : "";
+  };
 
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newVolume = parseFloat(e.target.value);
@@ -80,7 +116,7 @@ export default function Home() {
     if (isPlaying) {
       audioRef.current.pause();
     } else {
-      audioRef.current.play();
+      audioRef.current.play().catch(() => setIsPlaying(false));
     }
     setIsPlaying(!isPlaying);
   };
@@ -164,14 +200,11 @@ export default function Home() {
         json.status === "success" ||
         json.status === "Gaskeun!"
       ) {
-        setTracks([json.data, ...tracks]);
+        setTracks((prev) => [json.data as Track, ...prev]);
         setYoutubeUrl("");
         alert("Lagu sukses di-download! Gaskeun 🔥");
       } else {
-        alert(
-          "Error dari backend: " +
-            (json.error || "Gagal/Timeout"),
-        );
+        alert("Error dari backend: " + (json.error || "Gagal/Timeout"));
       }
     } catch (err: any) {
       console.error("Gagal Request:", err);
@@ -224,7 +257,7 @@ export default function Home() {
       }
 
       if (res.ok || json.status === "Gacor!") {
-        setTracks(tracks.filter((t) => t.id !== id));
+        setTracks((prev) => prev.filter((t) => t.id !== id));
         if (currentTrack?.id === id) {
           setCurrentTrack(null);
           audioRef.current?.pause();
@@ -242,24 +275,31 @@ export default function Home() {
 
   // Extract fungsi fetch biasa agar bisa dipakai ulang (oleh scan/search empty)
   const fetchTracks = async () => {
+    setIsFetchingTracks(true);
+    setFetchError("");
+
     try {
       const res = await fetch(`${API_BASE}/api/tracks`, { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
       const json = await res.json();
-      if (json && json.status === "success") {
-        setTracks(json.data || []);
+      const list = normalizeTracks(json);
+      setTracks(list);
+
+      if (currentTrack && !list.some((track) => track.id === currentTrack.id)) {
+        setCurrentTrack(null);
+        setIsPlaying(false);
       }
     } catch (err) {
       console.error("Failed to fetch tracks:", err);
+      setTracks([]);
+      setFetchError("Gagal ambil daftar musik. Coba refresh atau cek API.");
+    } finally {
+      setIsFetchingTracks(false);
     }
   };
 
   // Fitur Search
-  const handleSearch = async (
-    e: React.FormEvent | React.ChangeEvent<HTMLInputElement>,
-  ) => {
-    let kw = "";
-    if ("target" in e) kw = (e.target as HTMLInputElement).value;
+  const handleSearch = async (kw: string) => {
     setSearchQuery(kw);
 
     if (!kw.trim()) {
@@ -272,11 +312,12 @@ export default function Home() {
         `${API_BASE}/api/tracks/search?q=${encodeURIComponent(kw)}`,
       );
       const json = await res.json();
-      if (json.status === "success") {
-        setTracks(json.data || []);
-      }
+      setTracks(normalizeTracks(json));
+      setFetchError("");
     } catch (err) {
       console.error("Gagal nyari lagu:", err);
+      setTracks([]);
+      setFetchError("Pencarian gagal. Coba lagi sebentar.");
     }
   };
 
@@ -287,6 +328,7 @@ export default function Home() {
         togglePlay();
       }
     };
+    
 
     window.addEventListener("keydown", handleKeyPress);
     return () => window.removeEventListener("keydown", handleKeyPress);
@@ -298,8 +340,10 @@ export default function Home() {
   useEffect(() => {
     if (currentTrack && audioRef.current) {
       audioRef.current.load();
-      audioRef.current.play();
-      setIsPlaying(true);
+      audioRef.current
+        .play()
+        .then(() => setIsPlaying(true))
+        .catch(() => setIsPlaying(false));
       setProgress(0);
       setCurrentTime(0);
       setDuration(0);
@@ -335,7 +379,7 @@ export default function Home() {
           {/* GREETING SECTION */}
           <header className="mb-10">
             <h2 className="text-3xl font-black tracking-tight text-white mb-6">
-              Good Afternoon, Bosquu 🐈‍🤣
+              Hallo, silahkan upload dan edit lagu Bosquu 🐈‍🤣
             </h2>
             <label className="w-48 h-48 bg-[#282828] shadow-2xl flex-shrink-0 flex items-center justify-center cursor-pointer overflow-hidden rounded-md relative group">
               {playlistInfo.image ? (
@@ -369,7 +413,7 @@ export default function Home() {
                 onChange={(e) =>
                   setPlaylistInfo({ ...playlistInfo, name: e.target.value })
                 }
-                className="text-7xl font-black bg-transparent border-none outline-none focus:ring-0 p-0 tracking-tighter text-white"
+                className="text-3xl font-black bg-transparent border-none outline-none focus:ring-0 p-0 tracking-tighter text-white"
               />
               <div className="flex items-center gap-2 text-sm font-bold mt-2">
                 <span className="text-[#1DB954] hover:underline cursor-pointer">
@@ -387,7 +431,10 @@ export default function Home() {
             {/* ACTION BAR: Search, Download YT & Scan */}
             <div className="flex flex-col md:flex-row items-center justify-between gap-4 mb-6">
               <form
-                onSubmit={handleSearch}
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleSearch(searchQuery);
+                }}
                 className="flex items-center w-full max-w-md bg-[#282828]/60 rounded-full px-4 py-2 border border-[#4d4d4d]/30 focus-within:border-[#1DB954] transition-colors"
               >
                 <Search size={18} className="text-gray-400" />
@@ -396,7 +443,9 @@ export default function Home() {
                   placeholder="Cari lagu atau artis..."
                   className="bg-transparent border-none outline-none text-sm text-white w-full ml-2 focus:ring-0"
                   value={searchQuery}
-                  onChange={handleSearch} /* Realtime Search */
+                  onChange={(e) =>
+                    handleSearch(e.target.value)
+                  } /* Realtime Search */
                 />
               </form>
 
@@ -451,42 +500,63 @@ export default function Home() {
                 <p className="text-right">Action</p>
               </div>
 
-              {tracks.map((track, index) => (
-                <div
-                  key={track.id}
-                  onClick={() => setCurrentTrack(track)}
-                  className={`grid grid-cols-[40px_1fr_120px] gap-4 p-4 items-center transition-all cursor-pointer border-b border-[#151515]/50 group 
-  ${currentTrack?.id === track.id ? "bg-[#1DB954]/10" : "hover:bg-white/5"}`}
-                >
-                  <span
-                    className={`text-center text-sm font-mono ${currentTrack?.id === track.id ? "text-[#1DB954]" : "text-gray-500"}`}
-                  >
-                    {index + 1}
-                  </span>
-                  <div className="overflow-hidden">
-                    <p
-                      className={`text-sm font-bold truncate ${currentTrack?.id === track.id ? "text-[#1DB954]" : "text-white"}`}
-                    >
-                      {track.trackTitle || track.title}
-                    </p>
-                    <p className="text-xs text-gray-500 uppercase tracking-widest font-semibold">
-                      {track.artistName || track.artist}
-                    </p>
-                  </div>
-                  <div className="text-right opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-end gap-3 z-10">
-                    <button className="bg-[#1DB954] text-black p-2 rounded-full hover:scale-110 transition-transform">
-                      <Play size={14} fill="currentColor" />
-                    </button>
-                    <button
-                      onClick={(e) => handleDeleteTrack(e, track.id)}
-                      title="Hapus Lagu"
-                      className="bg-red-600/10 text-red-500 p-2 rounded-full hover:bg-red-600 hover:text-white transition-all"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
+              {isFetchingTracks && (
+                <div className="p-8 text-center text-sm text-gray-400">
+                  Mengambil daftar musik...
                 </div>
-              ))}
+              )}
+
+              {!isFetchingTracks && fetchError && (
+                <div className="p-8 text-center text-sm text-red-400">
+                  {fetchError}
+                </div>
+              )}
+
+              {!isFetchingTracks && !fetchError && tracks.length === 0 && (
+                <div className="p-8 text-center text-sm text-gray-400">
+                  Musik belum ada. Coba klik tombol sync atau tambah dari
+                  YouTube.
+                </div>
+              )}
+
+              {!isFetchingTracks &&
+                !fetchError &&
+                tracks.map((track, index) => (
+                  <div
+                    key={track.id}
+                    onClick={() => setCurrentTrack(track)}
+                    className={`grid grid-cols-[40px_1fr_120px] gap-4 p-4 items-center transition-all cursor-pointer border-b border-[#151515]/50 group 
+  ${currentTrack?.id === track.id ? "bg-[#1DB954]/10" : "hover:bg-white/5"}`}
+                  >
+                    <span
+                      className={`text-center text-sm font-mono ${currentTrack?.id === track.id ? "text-[#1DB954]" : "text-gray-500"}`}
+                    >
+                      {index + 1}
+                    </span>
+                    <div className="overflow-hidden">
+                      <p
+                        className={`text-sm font-bold truncate ${currentTrack?.id === track.id ? "text-[#1DB954]" : "text-white"}`}
+                      >
+                        {track.trackTitle || track.title}
+                      </p>
+                      <p className="text-xs text-gray-500 uppercase tracking-widest font-semibold">
+                        {track.artistName || track.artist}
+                      </p>
+                    </div>
+                    <div className="text-right opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-end gap-3 z-10">
+                      <button className="bg-[#1DB954] text-black p-2 rounded-full hover:scale-110 transition-transform">
+                        <Play size={14} fill="currentColor" />
+                      </button>
+                      <button
+                        onClick={(e) => handleDeleteTrack(e, track.id)}
+                        title="Hapus Lagu"
+                        className="bg-red-600/10 text-red-500 p-2 rounded-full hover:bg-red-600 hover:text-white transition-all"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
             </div>
           </section>
         </div>
@@ -494,7 +564,7 @@ export default function Home() {
 
       {/* PLAYER BAR */}
       {currentTrack && (
-        <footer className="fixed bottom-0 left-0 right-0 h-24 bg-black border-t border-[#121212] px-4 flex items-center justify-between z-50I">
+        <footer className="fixed bottom-0 left-0 right-0 h-24 bg-black border-t border-[#121212] px-4 flex items-center justify-between z-50">
           {/* INFO KIRI */}
           <div className="flex items-center gap-4 w-[30%]">
             <div className="w-14 h-14 bg-[#282828] rounded flex items-center justify-center">
@@ -608,7 +678,7 @@ export default function Home() {
           <audio
             ref={audioRef}
             key={currentTrack.id}
-            src={`${API_BASE}/storage/music/${currentTrack.fileName || currentTrack.file_name}`}
+            src={`${API_BASE}/storage/music/${getTrackFileName(currentTrack)}`}
             onTimeUpdate={handleTimeUpdate}
             onLoadedMetadata={handleTimeUpdate}
             onEnded={playNext}
