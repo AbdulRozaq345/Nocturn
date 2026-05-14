@@ -37,10 +37,21 @@ type TracksApiResponse = {
   tracks?: unknown;
 };
 
-type StoreTrackResponse = {
+type DownloadProgress = {
+  current: number;
+  total: number;
+  title?: string;
+  phase: string;
+};
+
+type DoneEventPayload = {
   status?: string;
+  total?: number;
+  downloaded?: number;
+  skipped?: number;
+  failed?: number;
+  data?: unknown[];
   error?: string;
-  data?: Track | null;
 };
 
 export default function Home() {
@@ -62,7 +73,32 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const [youtubeUrl, setYoutubeUrl] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadElapsed, setDownloadElapsed] = useState(0);
+  const [downloadProgress, setDownloadProgress] =
+    useState<DownloadProgress | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const downloadTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const PHASE_LABELS: Record<string, string> = {
+    fetching_playlist: "Ambil daftar",
+    starting: "Mulai",
+    downloading: "Download",
+    metadata: "Metadata",
+    completed: "Selesai",
+    skipped: "Skipped",
+    failed: "Gagal",
+  };
+
+  const PHASE_COLORS: Record<string, string> = {
+    fetching_playlist: "text-blue-400",
+    starting: "text-blue-400",
+    downloading: "text-[#1DB954]",
+    metadata: "text-yellow-400",
+    completed: "text-[#1DB954]",
+    skipped: "text-gray-400",
+    failed: "text-red-400",
+  };
 
   const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!audioRef.current) return;
@@ -77,8 +113,7 @@ export default function Home() {
     setProgress(percentage * 100);
   };
 
-  const API_BASE =
-    process.env.NEXT_PUBLIC_API_BASE_URL || "/backend";
+  const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "/backend";
 
   const normalizeTracks = (payload: unknown): Track[] => {
     if (Array.isArray(payload)) return payload as Track[];
@@ -100,6 +135,17 @@ export default function Home() {
   const getTrackFileName = (track: Track | null) => {
     const rawName = track?.fileName || track?.file_name || "";
     return rawName ? encodeURIComponent(rawName) : "";
+  };
+
+  const isPlaylistUrl = (url: string): boolean => {
+    try {
+      const u = new URL(url);
+      return (
+        u.searchParams.has("list") || u.pathname.includes("/playlist")
+      );
+    } catch {
+      return false;
+    }
   };
 
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -190,49 +236,121 @@ export default function Home() {
   const handleDownloadYoutube = async (youtubeUrl: string) => {
     if (!youtubeUrl) return alert("Patenkan URL YouTube-nya bosquu!");
     setIsLoading(true);
+    setIsDownloading(true);
+    setDownloadElapsed(0);
+    setDownloadProgress({
+      current: 0,
+      total: 0,
+      title: "Menghubungkan ke server...",
+      phase: "starting",
+    });
+    const startedAt = Date.now();
+    downloadTimerRef.current = setInterval(() => {
+      setDownloadElapsed(Math.floor((Date.now() - startedAt) / 1000));
+    }, 250);
+
+    let doneEvent: DoneEventPayload | null = null;
+    let streamError: string | null = null;
+
     try {
-      const res = await fetch(`${API_BASE}/api/store`, {
+      const endpoint = isPlaylistUrl(youtubeUrl)
+        ? "/api/store-playlist"
+        : "/api/store";
+      const res = await fetch(`${API_BASE}${endpoint}`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: youtubeUrl }),
       });
 
-      let json: StoreTrackResponse = {};
-      const text = await res.text();
-      try {
-        json = JSON.parse(text.trim()) as StoreTrackResponse;
-      } catch (e) {
-        console.warn("Bukan JSON murni. Raw response:", text);
+      if (!res.body) throw new Error("Response body kosong (no stream).");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        const blocks = buffer.split("\n\n");
+        buffer = blocks.pop() ?? "";
+
+        for (const block of blocks) {
+          if (!block.trim()) continue;
+
+          let eventType = "";
+          let dataStr = "";
+          for (const line of block.split("\n")) {
+            if (line.startsWith("event:")) {
+              eventType = line.slice(6).trim();
+            } else if (line.startsWith("data:")) {
+              dataStr = line.slice(5).trim();
+            }
+          }
+          if (!eventType || !dataStr) continue;
+
+          let payload: any;
+          try {
+            payload = JSON.parse(dataStr);
+          } catch {
+            console.warn("Gagal parse event data:", dataStr);
+            continue;
+          }
+
+          if (eventType === "progress") {
+            setDownloadProgress(payload as DownloadProgress);
+          } else if (eventType === "done") {
+            doneEvent = payload as DoneEventPayload;
+          } else if (eventType === "error") {
+            streamError = payload?.message || payload?.error || "Stream error";
+          }
+          // event "ping" sengaja di-ignore (keep-alive)
+        }
       }
 
-      if (
-        (res.ok && json.data) ||
-        json.status === "success" ||
-        json.status === "Gaskeun!"
-      ) {
-        const downloadedTrack = json.data;
-        if (isTrack(downloadedTrack)) {
-          setTracks((prev) => [downloadedTrack, ...prev]);
+      if (streamError) {
+        alert("Error dari backend: " + streamError);
+      } else if (doneEvent && doneEvent.status === "success") {
+        const items = Array.isArray(doneEvent.data) ? doneEvent.data : [];
+        const newTracks = items.filter(isTrack);
+        if (newTracks.length > 0) {
+          setTracks((prev) => [...newTracks, ...prev]);
         } else {
           await fetchTracks();
         }
         setYoutubeUrl("");
-        alert("Lagu sukses di-download! Gaskeun 🔥");
+        const downloaded = doneEvent.downloaded ?? newTracks.length;
+        const skipped = doneEvent.skipped ?? 0;
+        const failed = doneEvent.failed ?? 0;
+        const extra =
+          skipped || failed
+            ? ` (skip ${skipped}, gagal ${failed})`
+            : "";
+        alert(`Sukses! ${downloaded} lagu masuk${extra} 🔥`);
       } else {
-        alert("Error dari backend: " + (json.error || "Gagal/Timeout"));
+        alert(
+          "Gagal: " + (doneEvent?.error || doneEvent?.status || "Tidak ada event done"),
+        );
       }
     } catch (err: any) {
       console.error("Gagal Request:", err);
       if (err.name === "TypeError") {
         alert(
-          "Gagal menghubungi server (Terkendala CORS atau Timeout dari Cloudflare/Server karena proses download terlalu lama, cek log panel backend!).",
+          "Gagal menghubungi server (CORS / koneksi putus / timeout). Cek log backend.",
         );
       } else {
         alert("Terjadi kesalahan di jaringan/sistem: " + String(err.message));
       }
     } finally {
+      if (downloadTimerRef.current) {
+        clearInterval(downloadTimerRef.current);
+        downloadTimerRef.current = null;
+      }
+      setIsDownloading(false);
+      setDownloadElapsed(0);
+      setDownloadProgress(null);
       setIsLoading(false);
     }
   };
@@ -348,7 +466,6 @@ export default function Home() {
         togglePlay();
       }
     };
-    
 
     window.addEventListener("keydown", handleKeyPress);
     return () => window.removeEventListener("keydown", handleKeyPress);
@@ -503,6 +620,65 @@ export default function Home() {
                 </button>
               </div>
             </div>
+
+            {isDownloading && (
+              <div className="mb-6 p-4 bg-[#121212]/60 rounded-xl border border-[#1DB954]/30">
+                <div className="flex items-center justify-between mb-2 text-xs font-mono">
+                  <span className="text-[#1DB954] font-bold uppercase tracking-widest flex items-center gap-2">
+                    <RefreshCw size={12} className="animate-spin" />
+                    {downloadProgress?.phase
+                      ? PHASE_LABELS[downloadProgress.phase] ||
+                        downloadProgress.phase
+                      : "Downloading"}
+                    {downloadProgress &&
+                      downloadProgress.total > 0 && (
+                        <span className="text-gray-400 normal-case font-mono">
+                          {downloadProgress.current}/{downloadProgress.total}
+                        </span>
+                      )}
+                  </span>
+                  <span className="text-gray-400">
+                    {formatTime(downloadElapsed)}
+                  </span>
+                </div>
+
+                {downloadProgress?.title && (
+                  <p
+                    className={`text-xs mb-2 truncate ${
+                      PHASE_COLORS[downloadProgress.phase] || "text-gray-300"
+                    }`}
+                  >
+                    {downloadProgress.title}
+                  </p>
+                )}
+
+                <div className="h-1.5 w-full bg-[#4d4d4d]/40 rounded-full overflow-hidden relative">
+                  {downloadProgress && downloadProgress.total > 0 ? (
+                    <div
+                      className="h-full bg-gradient-to-r from-[#1DB954] to-[#1ed760] transition-all duration-300 ease-out"
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          (downloadProgress.current / downloadProgress.total) *
+                            100,
+                        )}%`,
+                      }}
+                    />
+                  ) : (
+                    <div className="absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-[#1DB954] to-transparent animate-pulse" />
+                  )}
+                </div>
+
+                {downloadProgress && downloadProgress.total > 0 && (
+                  <p className="text-[10px] text-gray-500 mt-2 font-mono">
+                    {Math.round(
+                      (downloadProgress.current / downloadProgress.total) * 100,
+                    )}
+                    % selesai
+                  </p>
+                )}
+              </div>
+            )}
 
             <div className="flex items-center justify-between mb-4 px-2">
               <h3 className="text-xl font-bold text-white flex items-center gap-2">
