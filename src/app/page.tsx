@@ -77,6 +77,9 @@ export default function Home() {
   const [downloadElapsed, setDownloadElapsed] = useState(0);
   const [downloadProgress, setDownloadProgress] =
     useState<DownloadProgress | null>(null);
+  const [downloadLog, setDownloadLog] = useState<
+    Array<{ id: number; event: string; phase?: string; title?: string; ts: number }>
+  >([]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const downloadTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -238,12 +241,32 @@ export default function Home() {
     setIsLoading(true);
     setIsDownloading(true);
     setDownloadElapsed(0);
+    setDownloadLog([]);
     setDownloadProgress({
       current: 0,
       total: 0,
       title: "Menghubungkan ke server...",
       phase: "starting",
     });
+
+    const pushLog = (
+      event: string,
+      payload?: { phase?: string; title?: string },
+    ) => {
+      setDownloadLog((prev) => {
+        const next = [
+          ...prev,
+          {
+            id: prev.length + 1,
+            event,
+            phase: payload?.phase,
+            title: payload?.title,
+            ts: Date.now(),
+          },
+        ];
+        return next.length > 50 ? next.slice(-50) : next;
+      });
+    };
     const startedAt = Date.now();
     downloadTimerRef.current = setInterval(() => {
       setDownloadElapsed(Math.floor((Date.now() - startedAt) / 1000));
@@ -253,13 +276,16 @@ export default function Home() {
     let streamError: string | null = null;
 
     try {
-      const endpoint = isPlaylistUrl(youtubeUrl)
-        ? "/api/store-playlist"
-        : "/api/store";
-      const res = await fetch(`${API_BASE}${endpoint}`, {
+      // Pakai route handler Next.js (/api/yt-download) yang stream langsung
+      // dari upstream tanpa buffering — bukan rewrite /backend/* yang
+      // diserap Next dan kemungkinan ngumpul di buffer.
+      const res = await fetch(`/api/yt-download`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: youtubeUrl }),
+      });
+      pushLog("response", {
+        title: `HTTP ${res.status} · ${res.headers.get("content-type") || "?"}`,
       });
 
       if (!res.body) throw new Error("Response body kosong (no stream).");
@@ -299,6 +325,14 @@ export default function Home() {
             continue;
           }
 
+          pushLog(eventType, {
+            phase: payload?.phase,
+            title:
+              payload?.title ??
+              payload?.message ??
+              payload?.error ??
+              (eventType === "ping" ? "alive" : undefined),
+          });
           if (eventType === "progress") {
             setDownloadProgress(payload as DownloadProgress);
           } else if (eventType === "done") {
@@ -306,7 +340,7 @@ export default function Home() {
           } else if (eventType === "error") {
             streamError = payload?.message || payload?.error || "Stream error";
           }
-          // event "ping" sengaja di-ignore (keep-alive)
+          // event "ping" tetap masuk log tapi tidak update progress
         }
       }
 
@@ -676,6 +710,52 @@ export default function Home() {
                     )}
                     % selesai
                   </p>
+                )}
+
+                {/* Live activity log */}
+                {downloadLog.length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-[#1a1a1a]">
+                    <p className="text-[10px] text-gray-500 uppercase tracking-widest font-bold mb-2">
+                      Activity ({downloadLog.length})
+                    </p>
+                    <div className="max-h-32 overflow-y-auto bg-black/40 rounded-md p-2 font-mono text-[10px] flex flex-col-reverse gap-1">
+                      {[...downloadLog].reverse().map((entry) => {
+                        const eventColor =
+                          entry.event === "progress"
+                            ? PHASE_COLORS[entry.phase || ""] || "text-gray-300"
+                            : entry.event === "done"
+                              ? "text-[#1DB954]"
+                              : entry.event === "error"
+                                ? "text-red-400"
+                                : entry.event === "ping"
+                                  ? "text-gray-600"
+                                  : "text-gray-400";
+                        return (
+                          <div
+                            key={entry.id}
+                            className="flex gap-2 items-baseline"
+                          >
+                            <span className="text-gray-600 shrink-0">
+                              {new Date(entry.ts).toLocaleTimeString("id-ID", {
+                                hour12: false,
+                              })}
+                            </span>
+                            <span
+                              className={`${eventColor} font-bold shrink-0 uppercase`}
+                            >
+                              {entry.event}
+                              {entry.phase ? `:${entry.phase}` : ""}
+                            </span>
+                            {entry.title && (
+                              <span className="text-gray-400 truncate">
+                                {entry.title}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                 )}
               </div>
             )}
